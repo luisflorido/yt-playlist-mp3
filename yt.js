@@ -4,27 +4,33 @@ var ytdl = require('youtube-dl');
 var ffmpeg = require('ffmpeg');
 var colors = require('colors/safe');
 
+const maxSize = 20;
+
 var videos = [];
 var videoSiz = 0;
-var converted = 0;
 
 function playlist(url) {
   'use strict';
   var video = ytdl(url);
 
   video.on('error', function error(err) {
-    console.log('error 2:', err);
+    console.log(`Erro ${err}`);
   });
 
   var size = 0;
   video.on('info', function (info) {
     size = info.size;
-    var filename = info._filename + '';
-    filename = filename.split('.')[0];
-    var output = path.join(__dirname + '/', size + '.mp4');
-    videos.push({ "output": output, "mp3": path.join(__dirname + '/mp3/', filename + '.mp3').replace(/ /g, '') });
-    video.pipe(fs.createWriteStream(output));
-    console.log(colors.cyan('Arquivo criado: ' + filename));
+    if ((size / 1000000) <= maxSize) {
+      var filename = info._filename + '';
+      filename = filename.split('.')[0];
+      var output = path.join(__dirname + '/', size + '.mp4');
+      videos.push({ "output": output, "mp3": path.join(__dirname + '/mp3/', filename.match(/[a-z0-9A-Z]+/g).join('_') + '.mp3') });
+      video.pipe(fs.createWriteStream(output));
+      console.log(colors.cyan('Arquivo criado: ' + filename));
+    } else {
+      console.log(colors.red(`Tamanho do video muito grande! Próximo...`));
+      video.on('next', playlist);
+    }
   });
 
   var pos = 0;
@@ -37,55 +43,43 @@ function playlist(url) {
       process.stdout.clearLine(1);
       process.stdout.write(percent <= 33 ? colors.red(percent + '%') : (percent <= 66 ? colors.yellow(percent + '%') : colors.green(percent + '%')));
       if (percent == 100) {
-        var fileName = videos[videoSiz];
         console.log(colors.green('\nArquivo baixado em ' + parseInt((Date.now() - milli) / 1000) + ' segundos.'));
-        console.log(colors.yellow('Convertendo arquivo: ' + fileName["mp3"] + '\n'));
-
-        try {
-          var ff = new ffmpeg(fileName["output"]);
-          ff.then(function (video) {
-            video.fnExtractSoundToMP3(fileName["mp3"], function (error, file) {
-              if (converted >= videos.length - 1) {
-                console.log(colors.red('Removendo arquivos...'));
-                fromDir(__dirname, /\.mp4$/, function (filename) {
-                  fs.unlinkSync(filename);
-                });
-              }
-              converted++;
-            });
-          }, function (err) {
-            console.log('Error: ' + err);
-          });
-        } catch (e) {
-          console.log(e.code);
-          console.log(e.msg);
-        }
-
-        videoSiz++;
       }
     }
   });
 
-  video.on('next', playlist);
-
-}
-
-function fromDir(startPath, filter, callback) {
-  if (!fs.existsSync(startPath)) {
-    console.log("no dir ", startPath);
-    return;
-  }
-
-  var files = fs.readdirSync(startPath);
-  for (var i = 0; i < files.length; i++) {
-    var filename = path.join(startPath, files[i]);
-    var stat = fs.lstatSync(filename);
-    if (stat.isDirectory()) {
-      fromDir(filename, filter, callback);
+  video.on('end', function () {
+    var atual = videos[videoSiz];
+    console.log(colors.yellow('Convertendo arquivo: ' + atual["mp3"] + '\n'));
+    try {
+      var ff = new ffmpeg(atual["output"]);
+      ff.then(function (video) {
+        videoSiz++;
+        video.fnExtractSoundToMP3(atual["mp3"], function (error, file) {
+          if (error) {
+            console.log(colors.red('Erro ao converter arquivo!'));
+            console.log(error);
+            return;
+          }
+          for (let i in videos) {
+            if (videos[i]["mp3"] == file + '') {
+              setTimeout(function () {
+                fs.unlinkSync(videos[i]["output"]);
+              }, 2000);
+            }
+          }
+        });
+      }, function (err) {
+        console.log('Error: ' + err);
+      });
+    } catch (e) {
+      console.log(e.code);
+      console.log(e.msg);
     }
-    else if (filter.test(filename)) callback(filename);
-  };
-};
+  });
+
+  video.on('next', playlist);
+}
 
 var args = process.argv;
 
